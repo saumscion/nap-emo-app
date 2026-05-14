@@ -1,0 +1,855 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no"/>
+<meta name="apple-mobile-web-app-capable" content="yes"/>
+<meta name="apple-mobile-web-app-status-bar-style" content="default"/>
+<meta name="apple-mobile-web-app-title" content="NAPS India"/>
+<meta name="theme-color" content="#0F6E56"/>
+<meta name="description" content="NAPS Affective Picture Rating Study – India"/>
+<title>😴 NAPS India Study</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>😴</text></svg>"/>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+html,body{height:100%;background:#f7f8fa;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;color:#111;overscroll-behavior:none;}
+#root{min-height:100vh;}
+input,select,textarea{font-family:inherit;font-size:16px;padding:12px 14px;border:1.5px solid #dde0e7;border-radius:10px;background:#fff;color:#111;width:100%;outline:none;-webkit-appearance:none;appearance:none;transition:border-color .15s,box-shadow .15s;}
+input:focus,select:focus,textarea:focus{border-color:#1D9E75;box-shadow:0 0 0 3px #1D9E7520;}
+button{font-family:inherit;cursor:pointer;border:none;outline:none;-webkit-appearance:none;}
+::-webkit-scrollbar{width:4px;}
+::-webkit-scrollbar-thumb{background:#ccc;border-radius:2px;}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const{useState,useEffect,useRef,useCallback}=React;
+
+/* ── storage helpers ── */
+const sg=(k,s=false)=>window.storage?.get(k,s).catch(()=>null)||Promise.resolve(null);
+const ss=(k,v,s=false)=>window.storage?.set(k,v,s).catch(()=>null)||Promise.resolve(null);
+const sd=(k,s=false)=>window.storage?.delete(k,s).catch(()=>null)||Promise.resolve(null);
+
+/* ── image compress ── */
+async function compress(file){
+  return new Promise((res,rej)=>{
+    const r=new FileReader();
+    r.onload=e=>{
+      const i=new Image();
+      i.onload=()=>{
+        const MAX=1100,c=document.createElement('canvas');
+        let[w,h]=[i.width,i.height];
+        if(w>MAX||h>MAX){const f=Math.min(MAX/w,MAX/h);[w,h]=[Math.round(w*f),Math.round(h*f)];}
+        [c.width,c.height]=[w,h];c.getContext('2d').drawImage(i,0,0,w,h);
+        res(c.toDataURL('image/jpeg',0.83));
+      };i.onerror=rej;i.src=e.target.result;
+    };r.onerror=rej;r.readAsDataURL(file);
+  });
+}
+
+/* ── utils ── */
+const pid=(n)=>'P'+String(n).padStart(3,'0');
+const dur=(ms)=>{const m=Math.floor(ms/60000),s=Math.round((ms%60000)/1000);return m>0?`${m}m ${s}s`:`${s}s`;};
+const secs=(ms)=>+(ms/1000).toFixed(1);
+
+function buildCSV(responses){
+  if(!responses.length)return 'No data collected yet.';
+  const lines=[];
+  /* ── header info ── */
+  lines.push('# NAPS India Validation Study — Response Data');
+  lines.push(`# Generated: ${new Date().toLocaleString('en-IN')}`);
+  lines.push(`# Total Participants: ${responses.length}`);
+  lines.push(`# Total Ratings: ${responses.reduce((a,r)=>a+r.ratings.length,0)}`);
+  lines.push('');
+  /* ── column headers ── */
+  lines.push([
+    'ParticipantID',
+    'Age','Gender','State_UT','Education','NativeLanguage',
+    'SessionStart_IST','SessionEnd_IST','TotalSessionDuration',
+    'TrialNumber','ImageName',
+    'ImageDisplayDuration_sec',
+    'Valence_1to9','Arousal_1to9','Dominance_1to9',
+    'Valence_Label','Arousal_Label','Dominance_Label',
+    'ImageViewTime_sec','RatingTime_sec',
+  ].join(','));
+  /* ── rows ── */
+  const vLabel=(v)=>v<=2?'Very Unpleasant':v<=4?'Unpleasant':v===5?'Neutral':v<=7?'Pleasant':'Very Pleasant';
+  const aLabel=(v)=>v<=2?'Very Calm':v<=4?'Calm':v===5?'Neutral':v<=7?'Excited':'Very Excited';
+  const dLabel=(v)=>v<=2?'No Control':v<=4?'Low Control':v===5?'Neutral':v<=7?'In Control':'Full Control';
+  for(const r of responses){
+    const sesStart=new Date(r.sessionStart||r.timestamp).toLocaleString('en-IN');
+    const sesEnd=new Date(r.sessionEnd||r.timestamp).toLocaleString('en-IN');
+    const totalDur=r.sessionEnd&&r.sessionStart?dur(new Date(r.sessionEnd)-new Date(r.sessionStart)):'N/A';
+    for(const rt of r.ratings){
+      lines.push([
+        r.pid,r.demographics.age,`"${r.demographics.gender}"`,
+        `"${r.demographics.state}"`,`"${r.demographics.education}"`,`"${r.demographics.language}"`,
+        `"${sesStart}"`,`"${sesEnd}"`,`"${totalDur}"`,
+        rt.imageOrder,`"${rt.imageName}"`,
+        rt.displayDuration||'N/A',
+        rt.valence,rt.arousal,rt.dominance,
+        `"${vLabel(rt.valence)}"`,`"${aLabel(rt.arousal)}"`,`"${dLabel(rt.dominance)}"`,
+        secs(rt.viewRT||0),secs(rt.ratingRT||0),
+      ].join(','));
+    }
+  }
+  /* ── per-image summary ── */
+  lines.push('');lines.push('# PER-IMAGE SUMMARY (means across all participants)');
+  lines.push('ImageName,N_Ratings,Mean_Valence,SD_Valence,Mean_Arousal,SD_Arousal,Mean_Dominance,SD_Dominance,Mean_RatingTime_sec');
+  const imgMap={};
+  for(const r of responses)for(const rt of r.ratings){
+    if(!imgMap[rt.imageName])imgMap[rt.imageName]=[];
+    imgMap[rt.imageName].push(rt);
+  }
+  const mean=(arr)=>(arr.reduce((a,b)=>a+b,0)/arr.length).toFixed(2);
+  const sd=(arr)=>{const m=arr.reduce((a,b)=>a+b,0)/arr.length;return Math.sqrt(arr.reduce((a,b)=>a+(b-m)**2,0)/arr.length).toFixed(2);};
+  for(const[name,rts]of Object.entries(imgMap)){
+    const vs=rts.map(r=>r.valence),as=rts.map(r=>r.arousal),ds=rts.map(r=>r.dominance),ts=rts.map(r=>secs(r.ratingRT||0));
+    lines.push([`"${name}"`,rts.length,mean(vs),sd(vs),mean(as),sd(as),mean(ds),sd(ds),mean(ts)].join(','));
+  }
+  return lines.join('\n');
+}
+
+/* ── SAM config ── */
+const DIMS={
+  valence:{label:'Valence',full:'Valence (Pleasure)',desc:'How pleasant or unpleasant did this picture make you feel?',lo:'Very\nUnpleasant',hi:'Very\nPleasant',loE:'😢',hiE:'😊',color:'#0F6E56',bg:'#E1F5EE'},
+  arousal:{label:'Arousal',full:'Arousal (Excitement)',desc:'How calm or excited/stimulated did this picture make you feel?',lo:'Very\nCalm',hi:'Very\nExcited',loE:'😴',hiE:'⚡',color:'#185FA5',bg:'#E6F1FB'},
+  dominance:{label:'Dominance',full:'Dominance (Control)',desc:'How much in control of the situation did you feel?',lo:'No\nControl',hi:'Full\nControl',loE:'🔴',hiE:'🟢',color:'#534AB7',bg:'#EEEDFE'},
+};
+const STATES=['Andhra Pradesh','Arunachal Pradesh','Assam','Bihar','Chhattisgarh','Goa','Gujarat','Haryana','Himachal Pradesh','Jharkhand','Karnataka','Kerala','Madhya Pradesh','Maharashtra','Manipur','Meghalaya','Mizoram','Nagaland','Odisha','Punjab','Rajasthan','Sikkim','Tamil Nadu','Telangana','Tripura','Uttar Pradesh','Uttarakhand','West Bengal','Delhi','Jammu & Kashmir','Ladakh','Puducherry','Other'];
+const EDUS=['High School / 12th','Undergraduate (B.A./B.Sc./B.Com/B.Tech)','Postgraduate (M.A./M.Sc./M.Com/M.Tech)','Professional (MBBS/LLB/MBA)','PhD / Doctoral','Other'];
+const DEFAULT_SETTINGS={adminPassword:'research2024',studyTitle:'NAPS Validation Study – India',displayDuration:5,instructions:'You will see a series of pictures on the screen, one at a time.\n\nEach picture will appear for a few seconds and disappear automatically.\n\nAfter each picture, you will rate how it made you feel using three scales.\n\nPlease respond based on your immediate emotional reaction — there are no right or wrong answers.'};
+
+/* ════════════════════════════ COMPONENTS ════════════════════════════ */
+
+function AppShell({children,bg='#f7f8fa'}){
+  return<div style={{minHeight:'100vh',background:bg,display:'flex',flexDirection:'column'}}>{children}</div>;
+}
+
+function TopBar({title,sub,onBack,right}){
+  return(
+    <div style={{background:'#fff',borderBottom:'1px solid #eee',padding:'12px 16px',display:'flex',alignItems:'center',gap:12,position:'sticky',top:0,zIndex:10,minHeight:56}}>
+      {onBack&&<button onClick={onBack} style={{background:'none',padding:'6px 10px 6px 6px',fontSize:18,color:'#555',minWidth:36,minHeight:36,display:'flex',alignItems:'center',borderRadius:8}}>←</button>}
+      <div style={{flex:1,minWidth:0}}>
+        <div style={{fontWeight:600,fontSize:15,color:'#111',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}}>{title}</div>
+        {sub&&<div style={{fontSize:12,color:'#888',marginTop:1}}>{sub}</div>}
+      </div>
+      {right}
+    </div>
+  );
+}
+
+function Page({children,pad=true}){
+  return<div style={{flex:1,overflowY:'auto',padding:pad?'20px 16px':0}}>{children}</div>;
+}
+
+function PrimaryBtn({onClick,disabled,children,full=false,style:s={}}){
+  return<button onClick={onClick} disabled={disabled} style={{background:disabled?'#ccc':'#1D9E75',color:'#fff',padding:'14px 24px',borderRadius:12,fontSize:15,fontWeight:600,width:full?'100%':'auto',minHeight:50,opacity:disabled?0.6:1,transition:'transform .1s,background .15s',cursor:disabled?'not-allowed':'pointer',...s}} onTouchStart={e=>{if(!disabled)e.currentTarget.style.transform='scale(0.97)'}} onTouchEnd={e=>e.currentTarget.style.transform='scale(1)'}>{children}</button>;
+}
+function SecBtn({onClick,children,full=false,style:s={}}){
+  return<button onClick={onClick} style={{background:'#fff',color:'#333',padding:'13px 22px',borderRadius:12,fontSize:14,fontWeight:500,border:'1.5px solid #ddd',width:full?'100%':'auto',minHeight:48,...s}}>{children}</button>;
+}
+
+function Card({children,style:s={}}){
+  return<div style={{background:'#fff',borderRadius:14,border:'1px solid #eee',padding:'16px',marginBottom:14,...s}}>{children}</div>;
+}
+
+function ProgressBar({value,total,color='#1D9E75'}){
+  const pct=total?Math.round((value/total)*100):0;
+  return(
+    <div>
+      <div style={{display:'flex',justifyContent:'space-between',fontSize:12,color:'#888',marginBottom:6}}>
+        <span>Picture {value} of {total}</span><span>{pct}% complete</span>
+      </div>
+      <div style={{height:6,background:'#eee',borderRadius:3,overflow:'hidden'}}>
+        <div style={{height:'100%',width:`${pct}%`,background:color,borderRadius:3,transition:'width .4s ease'}}/>
+      </div>
+    </div>
+  );
+}
+
+function SAMRow({dim,value,onChange}){
+  const cfg=DIMS[dim];
+  return(
+    <div style={{background:cfg.bg+'40',borderRadius:12,padding:'14px',marginBottom:12,border:`1px solid ${cfg.color}20`}}>
+      <div style={{display:'flex',alignItems:'center',gap:8,marginBottom:10}}>
+        <div style={{width:8,height:8,borderRadius:'50%',background:cfg.color,flexShrink:0}}/>
+        <span style={{fontWeight:600,fontSize:14,color:'#111'}}>{cfg.full}</span>
+      </div>
+      <p style={{fontSize:12,color:'#666',marginBottom:12,lineHeight:1.4}}>{cfg.desc}</p>
+      <div style={{display:'flex',alignItems:'center',gap:6}}>
+        <div style={{textAlign:'center',width:44,flexShrink:0}}>
+          <div style={{fontSize:22}}>{cfg.loE}</div>
+          <div style={{fontSize:9,color:'#888',marginTop:2,lineHeight:1.2,whiteSpace:'pre'}}>{cfg.lo}</div>
+        </div>
+        <div style={{flex:1,display:'grid',gridTemplateColumns:'repeat(9,1fr)',gap:3}}>
+          {[1,2,3,4,5,6,7,8,9].map(n=>(
+            <button key={n} onClick={()=>onChange(n)} style={{
+              height:40,border:value===n?`2px solid ${cfg.color}`:'1.5px solid #ddd',
+              borderRadius:8,background:value===n?cfg.color:'#fff',
+              color:value===n?'#fff':'#444',fontSize:13,fontWeight:value===n?700:400,
+              transition:'all .12s',minWidth:0,padding:0,
+            }}>{n}</button>
+          ))}
+        </div>
+        <div style={{textAlign:'center',width:44,flexShrink:0}}>
+          <div style={{fontSize:22}}>{cfg.hiE}</div>
+          <div style={{fontSize:9,color:'#888',marginTop:2,lineHeight:1.2,whiteSpace:'pre'}}>{cfg.hi}</div>
+        </div>
+      </div>
+      {value>0&&(
+        <div style={{marginTop:8,textAlign:'center',fontSize:12,color:cfg.color,fontWeight:600}}>
+          {cfg.label}: {value} / 9
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Timer({seconds,total}){
+  const pct=total?(seconds/total)*100:0;
+  const r=18,circ=2*Math.PI*r;
+  const urgent=seconds<=2;
+  return(
+    <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:4}}>
+      <svg width={50} height={50} style={{transform:'rotate(-90deg)'}}>
+        <circle cx={25} cy={25} r={r} fill='none' stroke={urgent?'#FAECE7':'#E1F5EE'} strokeWidth={4}/>
+        <circle cx={25} cy={25} r={r} fill='none' stroke={urgent?'#E24B4A':'#1D9E75'} strokeWidth={4}
+          strokeDasharray={circ} strokeDashoffset={circ*(1-pct/100)} strokeLinecap='round'
+          style={{transition:'stroke-dashoffset .9s linear,stroke .3s'}}/>
+        <text x={25} y={25} textAnchor='middle' dominantBaseline='central' style={{transform:'rotate(90deg)',transformOrigin:'25px 25px',fontSize:14,fontWeight:700,fill:urgent?'#E24B4A':'#1D9E75'}}>{seconds}</text>
+      </svg>
+      <span style={{fontSize:11,color:'#888'}}>seconds left</span>
+    </div>
+  );
+}
+
+function ImageThumb({id}){
+  const[src,setSrc]=useState(null);
+  useEffect(()=>{sg(`naps:img_${id}`,true).then(r=>{if(r)setSrc(r.value);});},[id]);
+  return<div style={{height:72,background:'#f0f0f0',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',borderRadius:'8px 8px 0 0'}}>
+    {src?<img src={src} alt='' style={{width:'100%',height:'100%',objectFit:'cover'}}/>:<span style={{fontSize:18,color:'#ccc'}}>🖼️</span>}
+  </div>;
+}
+
+/* ════════════════════════════ MAIN APP ════════════════════════════ */
+
+export default function App(){
+  const[screen,setScreen]=useState('loading');
+  const[settings,setSettings]=useState(DEFAULT_SETTINGS);
+  const[imagesMeta,setImagesMeta]=useState([]);
+
+  /* admin */
+  const[adminPassIn,setAdminPassIn]=useState('');
+  const[adminErr,setAdminErr]=useState('');
+  const[aTab,setATab]=useState('images');
+  const[uploadMsg,setUploadMsg]=useState('');
+  const[editS,setEditS]=useState(null);
+  const[stats,setStats]=useState({count:0,responses:[]});
+
+  /* participant */
+  const[participantId,setParticipantId]=useState('');
+  const[dem,setDem]=useState({age:'',gender:'',state:'',education:'',language:''});
+  const[demErr,setDemErr]=useState('');
+  const[consent,setConsent]=useState(false);
+  const[sessionStart,setSessionStart]=useState(null);
+
+  /* trial */
+  const[order,setOrder]=useState([]);
+  const[tIdx,setTIdx]=useState(0);
+  const[phase,setPhase]=useState('image');/* image|rating */
+  const[timerLeft,setTimerLeft]=useState(0);
+  const[imgSrc,setImgSrc]=useState(null);
+  const[imgLoading,setImgLoading]=useState(false);
+  const[ratings,setRatings]=useState([]);
+  const[cur,setCur]=useState({valence:0,arousal:0,dominance:0});
+  const[imgShowStart,setImgShowStart]=useState(0);
+  const[ratingStart,setRatingStart]=useState(0);
+
+  const timerRef=useRef(null);
+  const fileRef=useRef(null);
+
+  /* ── init ── */
+  useEffect(()=>{
+    (async()=>{
+      const sr=await sg('naps:settings',true);
+      if(sr)setSettings({...DEFAULT_SETTINGS,...JSON.parse(sr.value)});
+      const mr=await sg('naps:images_meta',true);
+      if(mr)setImagesMeta(JSON.parse(mr.value));
+      setScreen('landing');
+    })();
+  },[]);
+
+  /* ── image timer ── */
+  useEffect(()=>{
+    if(screen!=='trial'||phase!=='image')return;
+    let c=settings.displayDuration;
+    setTimerLeft(c);setImgShowStart(Date.now());
+    clearInterval(timerRef.current);
+    timerRef.current=setInterval(()=>{
+      c--;setTimerLeft(c);
+      if(c<=0){clearInterval(timerRef.current);setPhase('rating');setCur({valence:0,arousal:0,dominance:0});setRatingStart(Date.now());}
+    },1000);
+    return()=>clearInterval(timerRef.current);
+  },[screen,phase,tIdx,settings.displayDuration]);
+
+  /* ── load image ── */
+  useEffect(()=>{
+    if(screen!=='trial'||!order[tIdx])return;
+    setImgLoading(true);setImgSrc(null);
+    sg(`naps:img_${order[tIdx].id}`,true).then(r=>{if(r)setImgSrc(r.value);setImgLoading(false);});
+  },[screen,tIdx,order]);
+
+  /* ── admin login ── */
+  async function doAdminLogin(){
+    if(adminPassIn!==settings.adminPassword){setAdminErr('Incorrect password.');return;}
+    setAdminErr('');setAdminPassIn('');
+    const lr=await sg('naps:responses_list',true);
+    if(lr){
+      const pids=JSON.parse(lr.value);const resp=[];
+      for(const p of pids){const r=await sg(`naps:resp_${p}`,true);if(r)resp.push(JSON.parse(r.value));}
+      setStats({count:pids.length,responses:resp});
+    }
+    setScreen('admin');
+  }
+
+  /* ── upload ── */
+  async function doUpload(files){
+    if(!files.length)return;
+    const mr=await sg('naps:images_meta',true);
+    const cur=mr?JSON.parse(mr.value):[];const upd=[...cur];
+    for(let i=0;i<files.length;i++){
+      setUploadMsg(`${i+1}/${files.length} — ${files[i].name}`);
+      try{
+        const b64=await compress(files[i]);
+        const id=`${Date.now()}_${Math.random().toString(36).slice(2,6)}`;
+        await ss(`naps:img_${id}`,b64,true);
+        upd.push({id,name:files[i].name.replace(/\.[^/.]+$/,''),order:upd.length+1});
+      }catch(e){console.error(e);}
+    }
+    await ss('naps:images_meta',JSON.stringify(upd),true);
+    setImagesMeta(upd);setUploadMsg(`✓ ${files.length} image(s) uploaded.`);
+    setTimeout(()=>setUploadMsg(''),4000);
+  }
+
+  async function delImage(id){
+    try{await sd(`naps:img_${id}`,true);}catch{}
+    const upd=imagesMeta.filter(m=>m.id!==id).map((m,i)=>({...m,order:i+1}));
+    setImagesMeta(upd);await ss('naps:images_meta',JSON.stringify(upd),true);
+  }
+
+  /* ── start study ── */
+  async function startStudy(){
+    const cr=await sg('naps:counter',true);
+    const n=cr?parseInt(cr.value)+1:1;
+    await ss('naps:counter',String(n),true);
+    const newPid=pid(n);
+    setParticipantId(newPid);
+    setOrder([...imagesMeta].sort(()=>Math.random()-0.5));
+    setTIdx(0);setRatings([]);setPhase('image');
+    setSessionStart(new Date().toISOString());
+    setScreen('consent');
+  }
+
+  /* ── submit rating ── */
+  async function submitRating(){
+    const img=order[tIdx];
+    const newRatings=[...ratings,{
+      imageId:img.id,imageName:img.name,imageOrder:tIdx+1,
+      ...cur,
+      displayDuration:settings.displayDuration,
+      viewRT:ratingStart-imgShowStart,/* ms the image was shown (= displayDuration * 1000 approx) */
+      ratingRT:Date.now()-ratingStart,/* ms taken to rate */
+    }];
+    setRatings(newRatings);
+    if(tIdx+1>=order.length){
+      const sesEnd=new Date().toISOString();
+      const data={pid:participantId,demographics:dem,ratings:newRatings,sessionStart,sessionEnd:sesEnd,timestamp:sesEnd};
+      await ss(`naps:resp_${participantId}`,JSON.stringify(data),true);
+      const lr=await sg('naps:responses_list',true);
+      const list=lr?JSON.parse(lr.value):[];list.push(participantId);
+      await ss('naps:responses_list',JSON.stringify(list),true);
+      setScreen('complete');
+    }else{setTIdx(i=>i+1);setPhase('image');}
+  }
+
+  function saveSettings(){
+    ss('naps:settings',JSON.stringify(editS),true);
+    setSettings(editS);setEditS(null);
+  }
+
+  function dlCSV(){
+    const csv=buildCSV(stats.responses);
+    const b=new Blob([csv],{type:'text/csv'});
+    const u=URL.createObjectURL(b);
+    const a=document.createElement('a');a.href=u;a.download='NAPS_India_Ratings.csv';a.click();
+    URL.revokeObjectURL(u);
+  }
+
+  function checkDem(){
+    const{age,gender,state,education,language}=dem;
+    if(!age||!gender||!state||!education||!language){setDemErr('Please complete all fields.');return false;}
+    if(isNaN(age)||+age<18||+age>80){setDemErr('Please enter a valid age between 18 and 80.');return false;}
+    setDemErr('');return true;
+  }
+
+  /* ════════════════ SCREENS ════════════════ */
+
+  if(screen==='loading') return(
+    <AppShell>
+      <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:16,color:'#888'}}>
+        <div style={{fontSize:48}}>😴</div>
+        <div style={{fontSize:14}}>Loading study platform…</div>
+      </div>
+    </AppShell>
+  );
+
+  if(screen==='landing') return(
+    <AppShell bg='#f0f4f8'>
+      <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'24px 20px',gap:0}}>
+        <div style={{textAlign:'center',marginBottom:28}}>
+          <div style={{fontSize:52,marginBottom:10,filter:'drop-shadow(0 2px 8px #0003)'}}>😴</div>
+          <h1 style={{fontSize:22,fontWeight:700,color:'#111',margin:'0 0 6px'}}>{settings.studyTitle}</h1>
+          <p style={{fontSize:13,color:'#888',margin:0}}>Affective Picture Rating Platform · India</p>
+        </div>
+        <div style={{width:'100%',maxWidth:400,display:'flex',flexDirection:'column',gap:12}}>
+          <button onClick={startStudy} disabled={imagesMeta.length===0} style={{
+            background:imagesMeta.length?'linear-gradient(135deg,#1D9E75,#0F6E56)':'#ccc',
+            color:'#fff',padding:'18px',borderRadius:14,fontSize:16,fontWeight:700,
+            border:'none',minHeight:58,display:'flex',alignItems:'center',justifyContent:'center',gap:10,
+            boxShadow:imagesMeta.length?'0 4px 16px #1D9E7540':'none',
+            cursor:imagesMeta.length?'pointer':'not-allowed',transition:'transform .1s',
+          }} onTouchStart={e=>{if(imagesMeta.length)e.currentTarget.style.transform='scale(0.97)'}} onTouchEnd={e=>e.currentTarget.style.transform=''}>
+            <span style={{fontSize:20}}>🔬</span>
+            {imagesMeta.length===0?'No Images Loaded Yet':'Participate in Study'}
+          </button>
+          <button onClick={()=>setScreen('adminLogin')} style={{background:'#fff',color:'#333',padding:'16px',borderRadius:14,fontSize:14,fontWeight:500,border:'1.5px solid #e0e0e0',minHeight:52,display:'flex',alignItems:'center',justifyContent:'center',gap:8}}>
+            <span>⚙️</span> Admin Panel
+          </button>
+        </div>
+        {imagesMeta.length>0&&(
+          <div style={{marginTop:20,display:'flex',gap:16,fontSize:13,color:'#999'}}>
+            <span>🖼️ {imagesMeta.length} images</span>
+            <span>👤 {stats.count} participants</span>
+          </div>
+        )}
+      </div>
+    </AppShell>
+  );
+
+  if(screen==='adminLogin') return(
+    <AppShell>
+      <TopBar title='Admin Login' onBack={()=>setScreen('landing')}/>
+      <Page>
+        <div style={{maxWidth:400,margin:'20px auto 0'}}>
+          <div style={{textAlign:'center',marginBottom:24}}>
+            <div style={{fontSize:40,marginBottom:8}}>🔐</div>
+            <p style={{fontSize:14,color:'#888'}}>Enter your admin password</p>
+          </div>
+          <label style={{display:'block',fontSize:13,color:'#666',marginBottom:6}}>Password</label>
+          <input type='password' value={adminPassIn} onChange={e=>setAdminPassIn(e.target.value)}
+            onKeyDown={e=>e.key==='Enter'&&doAdminLogin()} placeholder='Enter password' style={{marginBottom:12}}/>
+          {adminErr&&<div style={{background:'#FCEBEB',border:'1px solid #f0a0a0',borderRadius:8,padding:'10px 14px',fontSize:13,color:'#c0392b',marginBottom:12}}>{adminErr}</div>}
+          <PrimaryBtn onClick={doAdminLogin} full>Login</PrimaryBtn>
+          <p style={{marginTop:14,fontSize:12,color:'#bbb',textAlign:'center'}}>Default: <code>research2024</code></p>
+        </div>
+      </Page>
+    </AppShell>
+  );
+
+  /* ── ADMIN PANEL ── */
+  if(screen==='admin'){
+    const tabs=[['images','🖼️','Images'],['settings','⚙️','Settings'],['data','📊','Data']];
+    return(
+      <AppShell>
+        <TopBar title='Admin Panel' sub={settings.studyTitle}
+          right={<button onClick={()=>setScreen('landing')} style={{background:'none',color:'#888',fontSize:13,padding:'6px 12px',border:'1px solid #ddd',borderRadius:8}}>Exit</button>}/>
+        {/* tab bar */}
+        <div style={{background:'#fff',borderBottom:'1px solid #eee',display:'flex',position:'sticky',top:56,zIndex:9}}>
+          {tabs.map(([k,ic,l])=>(
+            <button key={k} onClick={()=>setATab(k)} style={{
+              flex:1,padding:'12px 4px',background:'none',border:'none',borderBottom:aTab===k?'2.5px solid #1D9E75':'2.5px solid transparent',
+              color:aTab===k?'#1D9E75':'#888',fontSize:12,fontWeight:aTab===k?700:400,display:'flex',flexDirection:'column',alignItems:'center',gap:2,cursor:'pointer',
+            }}><span style={{fontSize:16}}>{ic}</span>{l}</button>
+          ))}
+        </div>
+        <Page>
+          {/* IMAGES */}
+          {aTab==='images'&&(
+            <>
+              <div style={{border:'2px dashed #c8d0db',borderRadius:12,padding:'24px 16px',textAlign:'center',marginBottom:14,background:'#fafbfc',cursor:'pointer'}}
+                onClick={()=>fileRef.current?.click()}
+                onDragOver={e=>e.preventDefault()}
+                onDrop={e=>{e.preventDefault();doUpload([...e.dataTransfer.files].filter(f=>f.type.startsWith('image/')));}}>
+                <div style={{fontSize:32,marginBottom:8}}>⬆️</div>
+                <p style={{fontWeight:600,fontSize:14,margin:'0 0 4px'}}>Tap to upload NAPS images</p>
+                <p style={{fontSize:12,color:'#999',margin:0}}>JPG/PNG · auto-resized to 1100px max</p>
+                <input ref={fileRef} type='file' accept='image/*' multiple style={{display:'none'}} onChange={e=>doUpload([...e.target.files])}/>
+              </div>
+              {uploadMsg&&<div style={{background:'#E1F5EE',border:'1px solid #9FE1CB',borderRadius:8,padding:'10px 14px',fontSize:13,color:'#085041',marginBottom:12}}>{uploadMsg}</div>}
+              {imagesMeta.length===0?(
+                <div style={{textAlign:'center',padding:'30px 0',color:'#bbb'}}>
+                  <div style={{fontSize:36,marginBottom:8}}>🖼️</div>
+                  <p style={{fontSize:14}}>No images uploaded yet</p>
+                </div>
+              ):(
+                <>
+                  <p style={{fontSize:13,color:'#888',marginBottom:12}}>
+                    {imagesMeta.length} image(s) · presented in randomised order to each participant
+                  </p>
+                  <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(120px,1fr))',gap:10}}>
+                    {imagesMeta.map(img=>(
+                      <div key={img.id} style={{background:'#fff',border:'1px solid #eee',borderRadius:10,overflow:'hidden'}}>
+                        <ImageThumb id={img.id}/>
+                        <div style={{padding:'6px 8px'}}>
+                          <p style={{margin:'0 0 4px',fontSize:10,color:'#888',wordBreak:'break-all',lineHeight:1.3}}>{img.name}</p>
+                          <button onClick={()=>delImage(img.id)} style={{fontSize:11,color:'#E24B4A',background:'none',border:'none',cursor:'pointer',padding:0}}>✕ Remove</button>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </>
+              )}
+            </>
+          )}
+          {/* SETTINGS */}
+          {aTab==='settings'&&(
+            <div style={{maxWidth:480}}>
+              {editS?(
+                <>
+                  {[['studyTitle','Study Title','text'],['displayDuration','Image Display Duration (seconds)','number']].map(([k,l,t])=>(
+                    <div key={k} style={{marginBottom:16}}>
+                      <label style={{display:'block',fontSize:13,color:'#666',marginBottom:6,fontWeight:500}}>{l}</label>
+                      <input type={t} value={editS[k]} onChange={e=>setEditS({...editS,[k]:t==='number'?parseInt(e.target.value)||5:e.target.value})} style={t==='number'?{width:120}:{}}/>
+                    </div>
+                  ))}
+                  <div style={{marginBottom:16}}>
+                    <label style={{display:'block',fontSize:13,color:'#666',marginBottom:6,fontWeight:500}}>Participant Instructions</label>
+                    <textarea value={editS.instructions} onChange={e=>setEditS({...editS,instructions:e.target.value})} rows={6} style={{fontSize:13,padding:10,resize:'vertical'}}/>
+                  </div>
+                  <div style={{marginBottom:20}}>
+                    <label style={{display:'block',fontSize:13,color:'#666',marginBottom:6,fontWeight:500}}>Admin Password</label>
+                    <input type='text' value={editS.adminPassword} onChange={e=>setEditS({...editS,adminPassword:e.target.value})}/>
+                  </div>
+                  <div style={{display:'flex',gap:10}}>
+                    <PrimaryBtn onClick={saveSettings}>Save</PrimaryBtn>
+                    <SecBtn onClick={()=>setEditS(null)}>Cancel</SecBtn>
+                  </div>
+                </>
+              ):(
+                <>
+                  {[
+                    ['📌 Study title',settings.studyTitle],
+                    ['⏱ Display duration',`${settings.displayDuration} seconds per image`],
+                    ['📊 Rating scales','Valence · Arousal · Dominance (1–9)'],
+                    ['🔀 Trial order','Randomised per participant'],
+                    ['🆔 Participant IDs','Anonymous sequential: P001, P002…'],
+                    ['⏩ Rating pace','Self-paced after image disappears'],
+                  ].map(([k,v])=>(
+                    <div key={k} style={{display:'flex',justifyContent:'space-between',alignItems:'flex-start',padding:'13px 0',borderBottom:'1px solid #f0f0f0',gap:12}}>
+                      <span style={{fontSize:13,color:'#888',flexShrink:0}}>{k}</span>
+                      <span style={{fontSize:13,fontWeight:600,textAlign:'right'}}>{v}</span>
+                    </div>
+                  ))}
+                  <div style={{marginTop:20}}><PrimaryBtn onClick={()=>setEditS({...settings})}>Edit Settings</PrimaryBtn></div>
+                </>
+              )}
+            </div>
+          )}
+          {/* DATA */}
+          {aTab==='data'&&(
+            <>
+              <div style={{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:10,marginBottom:20}}>
+                {[['👤','Participants',stats.count],['🖼️','Images',imagesMeta.length],['📝','Total Ratings',stats.responses.reduce((a,r)=>a+r.ratings.length,0)]].map(([ic,l,v])=>(
+                  <div key={l} style={{background:'#fff',border:'1px solid #eee',borderRadius:10,padding:'14px 8px',textAlign:'center'}}>
+                    <div style={{fontSize:22}}>{ic}</div>
+                    <div style={{fontSize:22,fontWeight:700,color:'#111',margin:'4px 0 2px'}}>{v}</div>
+                    <div style={{fontSize:11,color:'#999'}}>{l}</div>
+                  </div>
+                ))}
+              </div>
+              {stats.count>0?(
+                <>
+                  <PrimaryBtn onClick={dlCSV} full style={{marginBottom:16}}>⬇️ Download Full CSV</PrimaryBtn>
+                  <p style={{fontSize:12,color:'#888',marginBottom:14}}>CSV includes: Valence, Arousal, Dominance (1–9) · value labels · image view time · rating time · session duration · per-image summary statistics</p>
+                  <div style={{overflowX:'auto',borderRadius:10,border:'1px solid #eee'}}>
+                    <table style={{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:480}}>
+                      <thead style={{background:'#f8f8f8'}}>
+                        <tr>{['ID','Age','Gender','State','Rated','Session Duration','Date'].map(h=>(
+                          <th key={h} style={{textAlign:'left',padding:'10px 10px',color:'#888',fontWeight:600,borderBottom:'1px solid #eee',whiteSpace:'nowrap'}}>{h}</th>
+                        ))}</tr>
+                      </thead>
+                      <tbody>
+                        {stats.responses.map(r=>{
+                          const sesD=r.sessionEnd&&r.sessionStart?dur(new Date(r.sessionEnd)-new Date(r.sessionStart)):'—';
+                          return(
+                            <tr key={r.pid} style={{borderBottom:'1px solid #f5f5f5'}}>
+                              <td style={{padding:'10px',fontWeight:700,color:'#1D9E75'}}>{r.pid}</td>
+                              <td style={{padding:'10px'}}>{r.demographics.age}</td>
+                              <td style={{padding:'10px'}}>{r.demographics.gender}</td>
+                              <td style={{padding:'10px',maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{r.demographics.state}</td>
+                              <td style={{padding:'10px',textAlign:'center'}}>{r.ratings.length}</td>
+                              <td style={{padding:'10px',color:'#555',fontWeight:500}}>{sesD}</td>
+                              <td style={{padding:'10px',color:'#aaa'}}>{r.timestamp?.slice(0,10)}</td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                  {/* per-image means */}
+                  {stats.responses.length>0&&(()=>{
+                    const imgMap={};
+                    for(const r of stats.responses)for(const rt of r.ratings){
+                      if(!imgMap[rt.imageName])imgMap[rt.imageName]=[];
+                      imgMap[rt.imageName].push(rt);
+                    }
+                    const mean=(a)=>(a.reduce((x,y)=>x+y,0)/a.length).toFixed(2);
+                    return(
+                      <>
+                        <h3 style={{fontSize:14,fontWeight:600,margin:'20px 0 10px',color:'#333'}}>📊 Per-Image Summary</h3>
+                        <div style={{overflowX:'auto',borderRadius:10,border:'1px solid #eee'}}>
+                          <table style={{width:'100%',borderCollapse:'collapse',fontSize:12,minWidth:500}}>
+                            <thead style={{background:'#f8f8f8'}}>
+                              <tr>{['Image','N','Valence (mean)','Arousal (mean)','Dominance (mean)'].map(h=>(
+                                <th key={h} style={{padding:'9px 10px',textAlign:'left',color:'#888',fontWeight:600,borderBottom:'1px solid #eee',whiteSpace:'nowrap'}}>{h}</th>
+                              ))}</tr>
+                            </thead>
+                            <tbody>
+                              {Object.entries(imgMap).map(([name,rts])=>(
+                                <tr key={name} style={{borderBottom:'1px solid #f5f5f5'}}>
+                                  <td style={{padding:'9px 10px',maxWidth:140,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:500}}>{name}</td>
+                                  <td style={{padding:'9px 10px',color:'#888'}}>{rts.length}</td>
+                                  <td style={{padding:'9px 10px'}}><span style={{background:'#E1F5EE',color:'#0F6E56',padding:'2px 8px',borderRadius:6,fontWeight:600}}>{mean(rts.map(r=>r.valence))}</span></td>
+                                  <td style={{padding:'9px 10px'}}><span style={{background:'#E6F1FB',color:'#185FA5',padding:'2px 8px',borderRadius:6,fontWeight:600}}>{mean(rts.map(r=>r.arousal))}</span></td>
+                                  <td style={{padding:'9px 10px'}}><span style={{background:'#EEEDFE',color:'#534AB7',padding:'2px 8px',borderRadius:6,fontWeight:600}}>{mean(rts.map(r=>r.dominance))}</span></td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </>
+                    );
+                  })()}
+                </>
+              ):(
+                <div style={{textAlign:'center',padding:'40px 0',color:'#bbb'}}>
+                  <div style={{fontSize:36,marginBottom:8}}>📭</div>
+                  <p style={{fontSize:14}}>No participant data yet</p>
+                </div>
+              )}
+            </>
+          )}
+        </Page>
+      </AppShell>
+    );
+  }
+
+  /* ── CONSENT ── */
+  if(screen==='consent') return(
+    <AppShell>
+      <TopBar title='Informed Consent' sub={`Your ID: ${participantId}`}/>
+      <Page>
+        <div style={{background:'#E1F5EE',borderRadius:10,padding:'10px 14px',marginBottom:16,display:'flex',alignItems:'center',gap:10}}>
+          <span style={{fontSize:18}}>🆔</span>
+          <div>
+            <p style={{margin:0,fontSize:12,color:'#085041'}}>Your Anonymous Participant ID</p>
+            <p style={{margin:0,fontSize:20,fontWeight:800,color:'#0F6E56',letterSpacing:'0.08em'}}>{participantId}</p>
+            <p style={{margin:0,fontSize:11,color:'#1D9E75'}}>Please note this down</p>
+          </div>
+        </div>
+        <Card>
+          <p style={{fontWeight:600,fontSize:14,marginBottom:12}}>Please read before proceeding:</p>
+          {[
+            ['🎯','Purpose','This study collects emotional ratings for pictures to develop normative affective data for the Indian population.'],
+            ['📋','What you will do','View pictures one at a time and rate each using three emotional scales. Takes 15–30 minutes.'],
+            ['🔒','Anonymity','You are identified only by your anonymous ID. No personal data is stored.'],
+            ['✋','Voluntary','Participation is completely voluntary. You may stop at any time without penalty.'],
+            ['📤','Data use','Anonymised responses will be used for academic research and may be published.'],
+          ].map(([ic,t,d])=>(
+            <div key={t} style={{display:'flex',gap:10,marginBottom:12,alignItems:'flex-start'}}>
+              <span style={{fontSize:16,flexShrink:0}}>{ic}</span>
+              <div><span style={{fontWeight:600,fontSize:13}}>{t}: </span><span style={{fontSize:13,color:'#555'}}>{d}</span></div>
+            </div>
+          ))}
+        </Card>
+        <label style={{display:'flex',alignItems:'flex-start',gap:12,padding:'16px',background:'#fff',borderRadius:12,border:'1.5px solid #ddd',marginBottom:20,cursor:'pointer'}}>
+          <input type='checkbox' checked={consent} onChange={e=>setConsent(e.target.checked)} style={{width:20,height:20,marginTop:1,flexShrink:0,accentColor:'#1D9E75'}}/>
+          <span style={{fontSize:14,lineHeight:1.5}}>I have read and understood the above. I voluntarily agree to participate in this study.</span>
+        </label>
+        <div style={{display:'flex',gap:10}}>
+          <PrimaryBtn onClick={()=>setScreen('demographics')} disabled={!consent} full>I Agree — Continue →</PrimaryBtn>
+        </div>
+        <div style={{marginTop:10}}>
+          <SecBtn onClick={()=>setScreen('landing')} full>Decline</SecBtn>
+        </div>
+      </Page>
+    </AppShell>
+  );
+
+  /* ── DEMOGRAPHICS ── */
+  if(screen==='demographics') return(
+    <AppShell>
+      <TopBar title='About You' sub='Step 1 of 3 — All anonymous' onBack={()=>setScreen('consent')}/>
+      <Page>
+        <p style={{fontSize:13,color:'#888',marginBottom:16}}>This information helps us analyse responses across different groups. Nothing can identify you personally.</p>
+        <div style={{marginBottom:14}}>
+          <label style={{display:'block',fontSize:13,color:'#555',marginBottom:6,fontWeight:500}}>Age (years)</label>
+          <input type='number' placeholder='e.g. 24' value={dem.age} onChange={e=>setDem({...dem,age:e.target.value})} style={{width:160}}/>
+        </div>
+        <div style={{marginBottom:14}}>
+          <label style={{display:'block',fontSize:13,color:'#555',marginBottom:6,fontWeight:500}}>Gender</label>
+          <select value={dem.gender} onChange={e=>setDem({...dem,gender:e.target.value})}>
+            <option value=''>Select…</option>
+            {['Male','Female','Non-binary','Prefer not to say'].map(g=><option key={g} value={g}>{g}</option>)}
+          </select>
+        </div>
+        <div style={{marginBottom:14}}>
+          <label style={{display:'block',fontSize:13,color:'#555',marginBottom:6,fontWeight:500}}>State / Union Territory</label>
+          <select value={dem.state} onChange={e=>setDem({...dem,state:e.target.value})}>
+            <option value=''>Select…</option>
+            {STATES.map(s=><option key={s} value={s}>{s}</option>)}
+          </select>
+        </div>
+        <div style={{marginBottom:14}}>
+          <label style={{display:'block',fontSize:13,color:'#555',marginBottom:6,fontWeight:500}}>Highest Education</label>
+          <select value={dem.education} onChange={e=>setDem({...dem,education:e.target.value})}>
+            <option value=''>Select…</option>
+            {EDUS.map(e=><option key={e} value={e}>{e}</option>)}
+          </select>
+        </div>
+        <div style={{marginBottom:20}}>
+          <label style={{display:'block',fontSize:13,color:'#555',marginBottom:6,fontWeight:500}}>Native Language (mother tongue)</label>
+          <input type='text' placeholder='e.g. Hindi, Tamil, Bengali…' value={dem.language} onChange={e=>setDem({...dem,language:e.target.value})}/>
+        </div>
+        {demErr&&<div style={{background:'#FCEBEB',border:'1px solid #f0a0a0',borderRadius:8,padding:'10px 14px',fontSize:13,color:'#c0392b',marginBottom:14}}>{demErr}</div>}
+        <PrimaryBtn onClick={()=>{if(checkDem())setScreen('instructions');}} full>Continue →</PrimaryBtn>
+      </Page>
+    </AppShell>
+  );
+
+  /* ── INSTRUCTIONS ── */
+  if(screen==='instructions') return(
+    <AppShell>
+      <TopBar title='Instructions' sub='Step 2 of 3'/>
+      <Page>
+        <Card style={{background:'#f9f9f9'}}>
+          <p style={{fontSize:14,lineHeight:1.8,whiteSpace:'pre-line',color:'#333'}}>{settings.instructions}</p>
+        </Card>
+        <Card style={{background:'#E1F5EE',border:'1px solid #9FE1CB'}}>
+          <p style={{fontWeight:600,fontSize:14,color:'#085041',marginBottom:12}}>The 3 rating scales:</p>
+          {Object.values(DIMS).map(c=>(
+            <div key={c.label} style={{display:'flex',alignItems:'center',gap:10,marginBottom:10,padding:'8px 10px',background:'#fff',borderRadius:8}}>
+              <span style={{fontSize:20}}>{c.loE}</span>
+              <div style={{flex:1}}>
+                <span style={{fontWeight:600,fontSize:13,color:c.color}}>{c.full} </span>
+                <span style={{fontSize:12,color:'#666'}}>{c.lo.replace('\n',' ')} (1) → {c.hi.replace('\n',' ')} (9)</span>
+              </div>
+              <span style={{fontSize:20}}>{c.hiE}</span>
+            </div>
+          ))}
+        </Card>
+        <div style={{background:'#f5f5f5',borderRadius:10,padding:'12px 14px',marginBottom:20,fontSize:13,color:'#666',display:'flex',gap:8,alignItems:'flex-start'}}>
+          <span>📌</span>
+          <span><strong>{order.length} pictures</strong> total · Each shown for <strong>{settings.displayDuration} seconds</strong> · Ratings are <strong>self-paced</strong></span>
+        </div>
+        <PrimaryBtn onClick={()=>setScreen('trial')} full>Begin Study →</PrimaryBtn>
+      </Page>
+    </AppShell>
+  );
+
+  /* ── TRIAL ── */
+  if(screen==='trial'){
+    const allRated=cur.valence>0&&cur.arousal>0&&cur.dominance>0;
+    return(
+      <AppShell bg={phase==='image'?'#0a0a0a':'#f7f8fa'}>
+        {/* progress header */}
+        <div style={{background:phase==='image'?'#111':'#fff',padding:'10px 16px',borderBottom:phase==='image'?'1px solid #222':'1px solid #eee',position:'sticky',top:0,zIndex:10}}>
+          <ProgressBar value={tIdx} total={order.length} color='#1D9E75'/>
+        </div>
+        {/* image phase */}
+        {phase==='image'&&(
+          <div style={{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'16px',gap:16}}>
+            <div style={{width:'100%',maxWidth:640,borderRadius:12,overflow:'hidden',background:'#1a1a1a',display:'flex',alignItems:'center',justifyContent:'center',minHeight:260,maxHeight:'55vh'}}>
+              {imgLoading?(
+                <div style={{color:'#555',fontSize:13}}>Loading…</div>
+              ):imgSrc?(
+                <img src={imgSrc} alt='stimulus' style={{maxWidth:'100%',maxHeight:'55vh',objectFit:'contain',display:'block'}}/>
+              ):(
+                <div style={{color:'#555',fontSize:13}}>Image not found</div>
+              )}
+            </div>
+            <div style={{display:'flex',flexDirection:'column',alignItems:'center',gap:6}}>
+              <Timer seconds={timerLeft} total={settings.displayDuration}/>
+              <p style={{fontSize:12,color:'#888',textAlign:'center'}}>Please observe this picture carefully</p>
+            </div>
+          </div>
+        )}
+        {/* rating phase */}
+        {phase==='rating'&&(
+          <Page>
+            <div style={{background:'#fff8e1',borderRadius:10,padding:'10px 14px',marginBottom:16,fontSize:13,color:'#7d5a00',display:'flex',gap:8,alignItems:'center'}}>
+              <span>📋</span><span>The picture has been removed. Please rate how it made you feel.</span>
+            </div>
+            {Object.keys(DIMS).map(dim=>(
+              <SAMRow key={dim} dim={dim} value={cur[dim]} onChange={v=>setCur(r=>({...r,[dim]:v}))}/>
+            ))}
+            <div style={{marginTop:8}}>
+              <PrimaryBtn onClick={submitRating} disabled={!allRated} full>
+                {tIdx+1<order.length?`Submit & Next (${tIdx+2}/${order.length}) →`:'Submit & Finish ✓'}
+              </PrimaryBtn>
+              {!allRated&&<p style={{fontSize:12,color:'#aaa',textAlign:'center',marginTop:8}}>Please rate all three dimensions to continue.</p>}
+            </div>
+          </Page>
+        )}
+      </AppShell>
+    );
+  }
+
+  /* ── COMPLETE ── */
+  if(screen==='complete') return(
+    <AppShell>
+      <Page>
+        <div style={{textAlign:'center',padding:'30px 0 20px'}}>
+          <div style={{fontSize:52,marginBottom:12}}>🎉</div>
+          <h1 style={{fontSize:22,fontWeight:700,margin:'0 0 8px'}}>Study Complete!</h1>
+          <p style={{fontSize:14,color:'#888',margin:'0 0 24px'}}>Thank you for participating.</p>
+        </div>
+        <Card style={{background:'#E1F5EE',border:'1px solid #9FE1CB',textAlign:'center'}}>
+          <p style={{fontSize:13,color:'#085041',margin:'0 0 6px'}}>Your Participant ID</p>
+          <p style={{fontSize:36,fontWeight:800,color:'#0F6E56',letterSpacing:'0.1em',margin:'0 0 6px'}}>{participantId}</p>
+          <p style={{fontSize:12,color:'#1D9E75',margin:0}}>Screenshot or note this ID in case you need to contact the researcher.</p>
+        </Card>
+        <Card>
+          <div style={{display:'flex',flexDirection:'column',gap:10}}>
+            {[
+              ['🖼️',`You rated ${ratings.length} pictures`],
+              ['⏱',`Session duration: ${sessionStart?dur(new Date()-new Date(sessionStart)):'—'}`],
+              ['📊','Your ratings: Valence, Arousal & Dominance recorded'],
+              ['🔒','All data saved anonymously'],
+            ].map(([ic,t])=>(
+              <div key={t} style={{display:'flex',gap:10,alignItems:'center',fontSize:14}}>
+                <span style={{fontSize:18}}>{ic}</span><span>{t}</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+        <p style={{fontSize:13,color:'#888',textAlign:'center',marginBottom:16,lineHeight:1.6}}>
+          Your responses will contribute to the normative affective picture data for the Indian population. 🇮🇳
+        </p>
+        <SecBtn onClick={()=>{setScreen('landing');setRatings([]);setParticipantId('');setDem({age:'',gender:'',state:'',education:'',language:''});setConsent(false);setSessionStart(null);}} full>Return to Home</SecBtn>
+      </Page>
+    </AppShell>
+  );
+
+  return null;
+}
+
+ReactDOM.render(<App/>,document.getElementById('root'));
+</script>
+</body>
+</html>
